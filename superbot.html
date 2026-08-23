@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart 3D Robot Chatbot</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+  <style>
+    body {
+      background-color: skyblue;
+      text-align: center;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      position: relative;
+    }
+    h1 {
+      margin-top: 40px;
+    }
+    #robot {
+      width: 300px;
+      height: 300px;
+      margin: 0 auto;
+    }
+    .chat-container {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-top: 10px;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .chat-container input[type="text"] {
+      width: 250px;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      outline: none;
+    }
+    .chat-container button,
+    .chat-container label {
+      background-color: #fff;
+      border: none;
+      padding: 10px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 18px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      transition: transform 0.1s ease;
+    }
+    .chat-container button:hover,
+    .chat-container label:hover {
+      transform: scale(1.1);
+    }
+    .hidden-file-input {
+      display: none;
+    }
+    #camera-container {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 4px solid white;
+      box-shadow: 0 0 8px rgba(0,0,0,0.3);
+    }
+    #camera {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    #toggleBtn {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      border: none;
+      background: #fff;
+      border-radius: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    #chatHistory {
+      position: fixed;
+      right: 10px;
+      top: 100px;
+      bottom: 100px;
+      width: 320px;
+      overflow-y: auto;
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: left;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.2);
+    }
+    .message {
+      margin: 10px 0;
+      padding: 10px 14px;
+      border-radius: 20px;
+      max-width: 80%;
+      font-size: 15px;
+      display: inline-block;
+      clear: both;
+      word-wrap: break-word;
+      line-height: 1.4;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+    }
+    .user {
+      background: linear-gradient(135deg, #d1f5d3, #b2f7b3);
+      float: right;
+      text-align: right;
+      color: #000;
+      border-bottom-right-radius: 5px;
+    }
+    .bot {
+      background: #ffffff;
+      float: left;
+      text-align: left;
+      color: #333;
+      border-bottom-left-radius: 5px;
+      border: 1px solid #e0e0e0;
+    }
+    @media screen and (max-width: 500px) {
+      #chatHistory {
+        position: static;
+        width: 95%;
+        margin: 10px auto;
+        max-height: 250px;
+      }
+      .chat-container input[type="text"] {
+        width: 90%;
+      }
+      #camera-container {
+        width: 120px;
+        height: 120px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Smart Chatbot</h1>
+  <model-viewer id="robot" src="https://modelviewer.dev/shared-assets/models/RobotExpressive.glb" alt="Robot" auto-rotate camera-controls animation-name="Wave" autoplay disable-zoom disable-pan disable-tap></model-viewer>
+  <div id="chatHistory"></div>
+  <div class="chat-container">
+    <input type="text" id="userInput" placeholder="How can I assist you...?" onkeydown="checkEnter(event)" />
+    <button onclick="sendMessage()">📤</button>
+    <button onclick="startVoice()">🎤</button>
+    <label for="imageInput">📷</label>
+    <input type="file" id="imageInput" class="hidden-file-input" accept="image/*" onchange="uploadImage()" />
+  </div>
+  <div id="camera-container">
+    <video id="camera" autoplay playsinline muted></video>
+  </div>
+  <button id="toggleBtn" onclick="toggleCamera()">Start Camera</button>
+  <script>
+    const input = document.getElementById('userInput');
+    const robot = document.getElementById('robot');
+    const chatHistory = document.getElementById('chatHistory');
+    const camera = document.getElementById('camera');
+    const toggleBtn = document.getElementById('toggleBtn');
+    let stream = null;
+    let detecting = false;
+
+    function checkEnter(event) {
+      if (event.key === "Enter") {
+        sendMessage();
+      }
+    }
+
+    function appendMessage(text, sender) {
+      const msg = document.createElement("div");
+      msg.className = `message ${sender}`;
+      msg.innerText = text;
+      chatHistory.appendChild(msg);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function speak(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "en-US";
+      speechSynthesis.speak(utterance);
+    }
+
+ async function getBotReply(userText) {
+  try {
+    const response = await fetch("http://localhost:5000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ message: userText })
+    });
+
+    const data = await response.json();
+    return data.reply;
+  } catch (err) {
+    console.error(err);
+    return "⚠️ Server not running or connection failed.";
+  }
+}
+    async function sendMessage() {
+      const text = input.value.trim();
+      if (!text) return;
+      appendMessage(text, "user");
+      input.value = "";
+      appendMessage("Typing...", "bot");
+      const reply = await getBotReply(text);
+      const botMessages = chatHistory.querySelectorAll(".bot");
+      if (botMessages.length > 0) botMessages[botMessages.length - 1].remove();
+      appendMessage(reply, "bot");
+      speak(reply);
+      if (reply.includes("hello")) robot.animationName = "Wave";
+      else if (reply.includes("help")) robot.animationName = "Idle";
+      else if (reply.includes("awesome")) robot.animationName = "Dance";
+      else robot.animationName = "Talking";
+    }
+
+    function startVoice() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'en-US';
+      recognition.onresult = function (event) {
+        input.value = event.results[0][0].transcript;
+        sendMessage();
+      };
+      recognition.start();
+    }
+
+    function uploadImage() {
+      const fileInput = document.getElementById('imageInput');
+      const file = fileInput.files[0];
+      if (file) {
+        appendMessage(`📸 Uploaded: ${file.name}`, "user");
+      }
+    }
+
+    async function toggleCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        detecting = false;
+        toggleBtn.innerText = "Start Camera";
+      } else {
+        await startCamera();
+        toggleBtn.innerText = "Stop Camera";
+      }
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        camera.srcObject = stream;
+        await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/weights');
+        await faceapi.nets.faceExpressionNet.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/weights');
+        detectExpressions();
+      } catch (err) {
+        console.error("Camera access denied:", err);
+      }
+    }
+
+    async function detectExpressions() {
+      detecting = true;
+      const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 });
+      const interval = setInterval(async () => {
+        if (!detecting) return clearInterval(interval);
+        const detections = await faceapi.detectSingleFace(camera, options).withFaceExpressions();
+        if (detections && detections.expressions) {
+          const { happy, sad, neutral } = detections.expressions;
+          if (happy > 0.6) robot.animationName = "Dance";
+          else if (sad > 0.4) robot.animationName = "Idle";
+          else if (neutral > 0.6) robot.animationName = "Talking";
+        }
+      }, 1000);
+    }
+
+    window.onload = () => {
+      chatHistory.innerHTML = "";
+      startCamera();
+    };
+  </script>
+</body>
+</html>
